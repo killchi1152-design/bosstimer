@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>✦ 倒計時（收藏＋排序＋提醒） ✦</title>
+<style>
+  :root{ --line:#ebdff5; --card:#fff; --ink:#2d2940; --ring:#ffd7f0; }
+  *{box-sizing:border-box} body{margin:0;font-family:"PingFang TC","Microsoft JhengHei",system-ui,sans-serif;background:#faf7ff;color:var(--ink)}
+  header{position:sticky;top:0;background:#ffffffcc;backdrop-filter:blur(8px);border-bottom:1px dashed var(--line);z-index:10}
+  .wrap{max-width:1200px;margin:0 auto;padding:14px 16px}
+  h1{margin:.2rem 0} .sub{opacity:.9}
+  .toolbar{display:flex;gap:10px;align-items:center;margin-top:6px;flex-wrap:wrap}
+  .btn{cursor:pointer;border:none;border-radius:12px;padding:8px 12px;font-weight:800;background:#fff;box-shadow:0 0 0 2px var(--ring)}
+  .layout{display:flex;gap:16px;align-items:flex-start}
+  #main{flex:1;min-width:0}
+  #favPanel{width:320px;position:sticky;top:92px;align-self:flex-start;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px}
+  .fav-item{border:1px dashed #ffd8ef;border-radius:10px;padding:8px;background:#fff;margin-bottom:8px}
+  .chap{margin:16px 0}
+  .chap-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .chap h2{margin:0;background:#fff;border:1px solid var(--line);border-radius:999px;padding:6px 12px}
+  .mini{cursor:pointer;border:1px solid var(--line);border-radius:10px;padding:4px 8px;background:#fff}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}
+  .streams{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+  .stream{border:1px dashed var(--line);border-radius:12px;padding:10px;background:#fff}
+  .stream-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .badge{font-weight:900;background:#ffeaf7;border:1px solid #ffd7f0;border-radius:999px;padding:4px 10px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .row label{font-weight:800; opacity:.9}
+  input.time{width:70px;padding:6px 8px;border:1px solid var(--line);border-radius:8px}
+  .star-btn{width:32px;height:32px;border-radius:50%;border:1px solid #cfc6da;background:#fff;cursor:pointer;font-size:16px}
+  .star-btn.active{background:#fff7cc;border-color:#ffd24d}
+  .count{font-weight:900;margin-top:4px}
+  #error{color:#b0054e;font-weight:800;display:none;margin-left:8px}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>✦ 倒計時（收藏＋排序＋提醒）</h1>
+    <div class="sub">章節/分流可排序；分流可收藏（右側顯示）；有提醒音效。</div>
+    <div class="toolbar">
+      <button class="btn" onclick="resetAll()">重置資料</button>
+      <label>音量 <input id="vol" type="range" min="0" max="1" step="0.01" value="0.7"></label>
+      <label><input id="mute" type="checkbox"> 靜音</label>
+      <span id="error"></span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap layout">
+  <div id="main"></div>
+  <aside id="favPanel">
+    <h3>⭐ 收藏的分流</h3>
+    <div id="favList"></div>
+  </aside>
+</div>
+
+<script>
+// --- 資料 ---
+const MAPS = {
+ "第七章": ["摩奇亞森林 1","扎卡里耶爾交叉路","王陵一層","王陵二層","王陵三層"],
+ "第八章": ["水路橋地區","阿雷魯諾男爵領","魔族收監所第一區","魔族收監所第三區","魔族收監所第四區","魔族收監所第五區"],
+ "第九章": ["女神的古院","佩迪米安外城","魔法師之塔一層","魔法師之塔二層","魔法師之塔三層"],
+ "第十章": ["大教堂懺悔路","大教堂正殿","大教堂大迴廊","大教堂至聖所"]
+};
+const KEY="all_map_timers";
+let saved; try{ saved=JSON.parse(localStorage.getItem(KEY)||"{}"); }catch{ saved={}; }
+const store=()=>localStorage.setItem(KEY,JSON.stringify(saved));
+const domId = raw => 'i_'+btoa(unescape(encodeURIComponent(raw))).replace(/=+$/,'');
+if(!Array.isArray(saved._chapOrder)) { saved._chapOrder = Object.keys(MAPS); store(); }
+const errorEl=document.getElementById('error');
+
+// --- 音效 ---
+let actx,master;
+function audio(){ if(!actx){ actx=new (window.AudioContext||window.webkitAudioContext)(); master=actx.createGain();
+master.gain.value=parseFloat(document.getElementById('vol')?.value||"0.7"); master.connect(actx.destination);
+document.getElementById('vol').addEventListener('input',e=>{ if(master) master.gain.value=parseFloat(e.target.value);}); } }
+function playChime(){ if(document.getElementById('mute').checked) return; audio(); let now=actx.currentTime;
+[660,880,990].forEach((f,i)=>{ let o=actx.createOscillator(),g=actx.createGain(); o.type='triangle'; o.frequency.value=f;
+o.connect(g); g.connect(master); g.gain.setValueAtTime(.5,now+i*.1); g.gain.exponentialRampToValueAtTime(.001,now+i*.1+.45);
+o.start(now+i*.1); o.stop(now+i*.1+.45); }); }
+function resetAll(){ localStorage.removeItem(KEY); location.reload(); }
+
+// --- Util ---
+function ensureStreams(id){ if(!Array.isArray(saved[id])) saved[id]=[]; }
+
+// --- 渲染 ---
+const main=document.getElementById('main');
+function renderAll(){
+  main.innerHTML="";
+  try{
+    saved._chapOrder.forEach(chap=>{
+      const sec=document.createElement('section'); sec.className='chap';
+      sec.innerHTML=`
+        <div class="chap-head">
+          <h2>${chap}</h2>
+          <div>
+            <button class="mini" onclick="moveChap('${chap}',-1)">↑</button>
+            <button class="mini" onclick="moveChap('${chap}',1)">↓</button>
+          </div>
+        </div>
+        <div class="grid"></div>`;
+      const grid=sec.querySelector('.grid');
+      (MAPS[chap]||[]).forEach(map=>{
+        const id=`${chap}-${map}`; const did=domId(id); ensureStreams(id);
+        const card=document.createElement('div'); card.className='card';
+        card.innerHTML=`
+          <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px">
+            <h3 style="margin:0">${map}</h3>
+            <button class="btn" onclick="addStream('${id}')">新增分流</button>
+          </div>
+          <div class="streams" id="${did}-streams"></div>`;
+        grid.appendChild(card);
+        renderStreams(id);
+      });
+      main.appendChild(sec);
+    });
+    renderFavs();
+    errorEl.style.display='none';
+  }catch(e){
+    errorEl.textContent='渲染錯誤：'+e.message+'（按「重置資料」修復）';
+    errorEl.style.display='inline';
+  }
+}
+function renderStreams(id){
+  const did=domId(id); const box=document.getElementById(did+'-streams'); if(!box) return; box.innerHTML="";
+  (saved[id]||[]).forEach((s,idx)=>{
+    if(!s) s={};
+    const sid=`${did}-${idx}`;
+    const el=document.createElement('div'); el.className='stream';
+    el.innerHTML=`
+      <div class="stream-head">
+        <div class="badge">分流${idx+1}</div>
+        <div class="row">
+          <button class="mini" onclick="moveStream('${id}',${idx},-1)">↑</button>
+          <button class="mini" onclick="moveStream('${id}',${idx},1)">↓</button>
+          <button class="star-btn ${s.fav?'active':''}" onclick="toggleFav('${id}',${idx},this)">${s.fav?'⭐':'☆'}</button>
+        </div>
+      </div>
+      <div class="row">
+        <label for="${sid}-a">提前提醒(分)</label>
+        <input id="${sid}-a" class="time" type="number" value="${s.a??5}">
+      </div>
+      <div class="row">
+        <input id="${sid}-h" class="time" type="number" placeholder="時" value="${s.h||0}">
+        <input id="${sid}-m" class="time" type="number" placeholder="分" value="${s.m||0}">
+        <input id="${sid}-s" class="time" type="number" placeholder="秒" value="${s.s||0}">
+      </div>
+      <div class="row">
+        <button class="btn" onclick="startTimer('${id}',${idx})">開始</button>
+        <button class="btn" onclick="pauseTimer('${id}',${idx})">暫停</button>
+        <button class="btn" onclick="resetTimer('${id}',${idx})">重設</button>
+        <button class="btn" onclick="delStream('${id}',${idx})">刪除</button>
+      </div>
+      <div class="count" id="${sid}-count">${s.end && s.end>Date.now() ? '計時中' : '尚未設定'}</div>`;
+    box.appendChild(el);
+    if(s.end && s.end>Date.now()) resumeTimer(id, idx, s.end, s.a||0);
+  });
+}
+
+// --- 排序 ---
+function moveChap(chap,dir){ const o=saved._chapOrder, i=o.indexOf(chap), j=i+dir; if(i<0||j<0||j>=o.length) return; [o[i],o[j]]=[o[j],o[i]]; store(); renderAll(); }
+function moveStream(id,idx,dir){ const a=saved[id], j=idx+dir; if(!a||j<0||j>=a.length) return; [a[idx],a[j]]=[a[j],a[idx]]; store(); renderStreams(id); renderFavs(); }
+
+// --- CRUD ---
+function addStream(id){ saved[id].push({a:5, fav:false}); store(); renderStreams(id); }
+function delStream(id,idx){ saved[id].splice(idx,1); store(); renderStreams(id); renderFavs(); }
+
+// --- 收藏 ---
+function toggleFav(id,idx,el){ const s=saved[id][idx]||(saved[id][idx]={}); s.fav=!s.fav; el.classList.toggle('active',s.fav); el.textContent=s.fav?'⭐':'☆'; store(); renderFavs(); }
+function renderFavs(){
+  const list=document.getElementById('favList'); list.innerHTML="";
+  const items=[]; saved._chapOrder.forEach(chap=>{ (MAPS[chap]||[]).forEach(map=>{ const id=`${chap}-${map}`; (saved[id]||[]).forEach((s,idx)=>{ if(s&&s.fav) items.push({chap,map,id,idx,s}); }); }); });
+  if(items.length===0){ list.innerHTML='<div style="opacity:.7">尚未收藏（點分流右上角 ☆ 收藏）</div>'; return; }
+  items.forEach(({chap,map,id,idx,s})=>{
+    const did=domId(id); const sid=`${did}-${idx}`;
+    const card=document.createElement('div'); card.className='fav-item';
+    card.innerHTML=`
+      <div style="opacity:.85">${chap} ／ ${map} ／ 分流${idx+1}</div>
+      <div class="count" id="fav-${sid}-count">${s.end && s.end>Date.now() ? '計時中' : '尚未設定'}</div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn" onclick="scrollToStream('${id}',${idx})">前往</button>
+        <button class="btn" onclick="startTimer('${id}',${idx})">開始</button>
+        <button class="btn" onclick="pauseTimer('${id}',${idx})">暫停</button>
+      </div>`;
+    list.appendChild(card);
+  });
+}
+function scrollToStream(id,idx){ const did=domId(id); const box=document.getElementById(did+'-streams'); if(!box) return;
+  const el=box.children[idx]; if(!el) return; el.scrollIntoView({behavior:'smooth',block:'center'}); el.style.outline='2px solid #ffd24d'; setTimeout(()=>el.style.outline='none',1200); }
+
+// --- 計時器 ---
+const timers={};
+function startTimer(id,idx){
+  const did=domId(id); const sid=`${did}-${idx}`;
+  const h=+document.getElementById(sid+'-h').value||0, m=+document.getElementById(sid+'-m').value||0, s=+document.getElementById(sid+'-s').value||0, a=+document.getElementById(sid+'-a').value||0;
+  const total = h*3600 + m*60 + s; if(total<=0){ alert('請輸入時間'); return; }
+  const end = Date.now() + total*1000;
+  const old = saved[id][idx] || {};
+  saved[id][idx] = {h,m,s,a,end,fav:!!old.fav}; store();
+  clearInterval(timers[sid]); resumeTimer(id,idx,end,a);
+}
+function resumeTimer(id,idx,end,a){
+  const did=domId(id); const sid=`${did}-${idx}`; clearInterval(timers[sid]);
+  timers[sid]=setInterval(()=>{
+    let remain=Math.max(0,Math.floor((end-Date.now())/1000));
+    const mm=Math.floor(remain/60).toString(); const ss=(remain%60).toString().padStart(2,'0');
+    const mainEl=document.getElementById(sid+'-count'); if(mainEl) mainEl.textContent='剩餘 '+mm+':'+ss;
+    const favEl=document.getElementById('fav-'+sid+'-count'); if(favEl) favEl.textContent='剩餘 '+mm+':'+ss;
+    if(remain===a*60){ playChime(); alert(`${id} 分流${idx+1} 還有 ${a} 分鐘`); }
+    if(remain<=0){ clearInterval(timers[sid]); playChime(); alert(`${id} 分流${idx+1} 時間到`);
+      const s=saved[id][idx]||{}; saved[id][idx]={h:s.h,m:s.m,s:s.s,a:s.a,fav:!!s.fav}; store();
+      if(mainEl) mainEl.textContent='尚未設定'; if(favEl) favEl.textContent='尚未設定';
+    }
+  },1000);
+}
+function pauseTimer(id,idx){
+  const did=domId(id); const sid=`${did}-${idx}`; clearInterval(timers[sid]);
+  const h=+document.getElementById(sid+'-h').value||0, m=+document.getElementById(sid+'-m').value||0, s=+document.getElementById(sid+'-s').value||0, a=+document.getElementById(sid+'-a').value||0;
+  const old=saved[id][idx]||{}; saved[id][idx]={h,m,s,a,fav:!!old.fav}; store();
+}
+function resetTimer(id,idx){
+  const did=domId(id); const sid=`${did}-${idx}`; clearInterval(timers[sid]);
+  const old=saved[id][idx]||{}; saved[id][idx]={a:(old.a??5), fav:!!old.fav}; store();
+  const mainEl=document.getElementById(sid+'-count'); if(mainEl) mainEl.textContent='尚未設定';
+  const favEl=document.getElementById('fav-'+sid+'-count'); if(favEl) favEl.textContent='尚未設定';
+}
+
+// --- 啟動 ---
+renderAll();
+</script>
+</body>
+</html>
